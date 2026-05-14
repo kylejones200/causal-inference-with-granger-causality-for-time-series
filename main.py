@@ -14,7 +14,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 # Add src to path
 
-import warnings
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -31,7 +30,6 @@ from src import (
 )
 from src.evaluator import Evaluator
 
-warnings.filterwarnings("ignore")
 
 
 def load_multivariate_data(
