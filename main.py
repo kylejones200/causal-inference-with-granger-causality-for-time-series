@@ -112,8 +112,7 @@ def load_multivariate_data(
         
         return df.dropna()
     
-    else:
-        raise ValueError("Must specify either 'input_file' or 'input_files' in data config")
+    raise ValueError("Must specify either 'input_file' or 'input_files' in data config")
 
 
 def test_stationarity(series: pd.Series, name: str) -> bool:
