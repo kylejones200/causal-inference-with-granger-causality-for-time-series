@@ -330,7 +330,7 @@ def forecast_multivariate(
         # Ensure columns match model params exactly
         X_forecast = X_forecast.reindex(columns=model.params.index, fill_value=0)
         forecast = model.predict(X_forecast).iloc[0]
-        forecasts.append(forecast)
+        pd.concat([forecasts, forecast])
     
     return pd.Series(forecasts, index=forecast_dates)
 
