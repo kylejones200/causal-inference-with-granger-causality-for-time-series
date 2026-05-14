@@ -97,7 +97,6 @@ def load_multivariate_data(
         
         # Single file, single column (fallback - synthesize a lagged predictor)
         else:
-            from src import load_time_series
             first_series = load_time_series(
                 str(first_file),
                 date_column=data_config.get("date_column", "date"),
