@@ -176,7 +176,6 @@ def test_granger_causality(
     
     if verbose:
         logger.info(f"\nTesting if '{predictor_col}' Granger-causes '{target_col}':")
-        logger.info("=" * 60)
     
     # Run Granger causality test
     gc_result = grangercausalitytests(test_data, maxlag=max_lag, verbose=verbose)
