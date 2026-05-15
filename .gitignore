@@ -4,3 +4,24 @@ __pycache__/
 mlruns/
 *.egg-info/
 .DS_Store
+# Secrets 
+.env
+.env.*
+!.env.example
+.env.local
+credentials.json
+secrets.json
+service-account*.json
+*.pem
+*.key
+# Python / packaging
+venv/
+dist/
+build/
+# Jupyter
+.ipynb_checkpoints/
+# Node (if used)
+node_modules/
+# OS / editors
+.idea/
+.vscode/

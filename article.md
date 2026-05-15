@@ -1,58 +1,137 @@
-# Causal Inference
+# Causal Inference with Granger Causality for Time Series
 
-Understanding causal relationships in economic time series goes beyond simple correlation analysis. This chapter explores methods for identifying and quantifying causal relationships in temporal economic data, from Granger causality to modern causal inference techniques.
+*Moving from correlation to causation — carefully*
 
-## Granger Causality: The Foundation
+---
 
-Granger causality is a fundamental tool for assessing whether one time series can predict another.
+Correlation is easy to find in time series data. Two variables that both trend upward will correlate. Two variables driven by the same seasonal cycle will correlate. None of that tells you anything about causation. Causal inference methods try to answer a harder question: if you intervened on variable X, what would happen to variable Y?
 
-import statsmodels.api as sm from statsmodels.tsa.stattools import grangercausalitytests from statsmodels.tsa.api import VAR
+For time series, the toolbox includes Granger causality, structural VAR models, local projections, and the synthetic control method. Each makes different assumptions and answers a slightly different question. None of them guarantee true causation — that requires a credible identification argument, not just a statistical test.
 
-class GrangerAnalysis: def __init__(self, data): self.data = data def test_granger_causality(self, variable1, variable2, max_lags=12): """Test for Granger causality between two variables""" data = pd.concat([self.data[variable1], self.data[variable2]], axis=1) results = grangercausalitytests(data, maxlag=max_lags) causality_results = pd.DataFrame( index=range(1, max_lags + 1), columns=['F-statistic', 'p-value'] ) for lag in range(1, max_lags + 1): causality_results.loc[lag] = [ results[lag][0]['ssr_ftest'][0], results[lag][0]['ssr_ftest'][1] ] return causality_results def plot_causality_results(self, results): """Plot p-values for different lag orders""" import matplotlib.pyplot as plt plt.figure(figsize=(10, 6)) plt.plot(results.index, results['p-value'], marker='o') plt.axhline(y=0.05, color='r', linestyle='--', label='5% significance') plt.xlabel('Lag Order') plt.ylabel('p-value') plt.title('Granger Causality Test Results') plt.legend() plt.show()
+## Granger Causality: Does X Help Predict Y?
+
+Granger causality tests whether past values of X improve predictions of Y, over and above Y's own past values. It is not causation in the philosophical sense — it is predictive precedence. But in many domains, predictive precedence is useful evidence.
+
+```python
+import pandas as pd
+from statsmodels.tsa.stattools import grangercausalitytests
+
+def test_granger(data, var1, var2, max_lags=12):
+    xy = pd.concat([data[var1], data[var2]], axis=1)
+    results = grangercausalitytests(xy, maxlag=max_lags, verbose=False)
+    
+    summary = pd.DataFrame(index=range(1, max_lags + 1), columns=['F-stat', 'p-value'])
+    for lag in range(1, max_lags + 1):
+        summary.loc[lag] = [
+            results[lag][0]['ssr_ftest'][0],
+            results[lag][0]['ssr_ftest'][1]
+        ]
+    return summary
+```
+
+The test fits two models: a restricted model using only Y's own lags, and an unrestricted model using both Y's and X's lags. If the F-test rejects the restriction, X Granger-causes Y at that lag length.
+
+A few things to watch:
+- **Stationarity required.** Both series must be stationary before testing. Apply ADF or KPSS tests first and difference if needed.
+- **Lag selection.** Use AIC or BIC to select the lag length, or test across a range and look for stability in the p-values.
+- **Reverse causality.** Always test both directions. If X Granger-causes Y and Y Granger-causes X, you have a feedback loop, not a unidirectional causal chain.
+
+Granger causality is most useful as an exploratory tool — it tells you which variable relationships are worth investigating more carefully with a structural model.
 
 ## Structural Vector Autoregression (SVAR)
 
-SVAR models extend the Vector Autoregression (VAR) framework by incorporating structural restrictions.
+VAR models treat multiple time series as mutually dependent — each variable is regressed on its own lags and the lags of all other variables in the system. SVARs add economic structure to the VAR by imposing restrictions that reflect theoretical beliefs about which contemporaneous relationships are plausible.
 
+```python
 from statsmodels.tsa.api import VAR
 
-class SVARModel: def __init__(self, data): self.data = data self.var_model = None self.svar_results = None def fit(self, lags=1, A=None, B=None): """Fit SVAR model with short-run (A) and long-run (B) restrictions""" self.var_model = VAR(self.data) var_results = self.var_model.fit(lags) if A is None: A = np.eye(len(self.data.columns)) if B is None: B = np.eye(len(self.data.columns)) self.svar_results = var_results.svar(A=A, B=B) return self.svar_results def impulse_response(self, periods=20): """Calculate impulse response functions""" return self.svar_results.irf(periods=periods) def forecast_error_variance_decomposition(self, periods=20): """Compute forecast error variance decomposition""" return self.svar_results.fevd(periods=periods)
+var_model = VAR(data)
+var_result = var_model.fit(maxlags=4, ic='aic')
+print(var_result.summary())
 
-## Local Projections for Causal Analysis
+irf = var_result.irf(periods=20)
+irf.plot(orth=True)
+```
 
-Local projections provide a flexible alternative for estimating impulse responses without relying on parametric VAR assumptions.
+The impulse response function (IRF) traces how a one-unit shock to one variable propagates through the system over time. Orthogonalized IRFs (Cholesky decomposition) assume a specific causal ordering — the ordering of variables in your dataset determines which contemporaneous shocks are allowed. This is a strong assumption and should be justified on domain grounds.
 
+Forecast error variance decomposition (FEVD) shows what fraction of the forecast variance of each variable is attributable to shocks from each other variable — useful for understanding which relationships dominate the system at different horizons.
+
+## Local Projections
+
+Local projections estimate impulse responses directly using a sequence of regressions rather than inverting a VAR. For each horizon h, regress the outcome at time t+h on the shock at time t and controls:
+
+```python
 import statsmodels.api as sm
+import numpy as np
 
-class LocalProjections: def __init__(self, data): self.data = data def estimate_impulse_response(self, dependent_var, shock_var, controls=None, horizons=20): """Estimate impulse responses using local projections""" responses = [] confidence_intervals = [] for h in range(horizons + 1): y = self.data[dependent_var].shift(-h) X = self.data[[shock_var]] if controls is not None: X = pd.concat([X, self.data[controls]], axis=1) X = sm.add_constant(X) valid_idx = y.notna() y = y[valid_idx] X = X[valid_idx] model = sm.OLS(y, X) results = model.fit(cov_type='HAC', cov_kwds={'maxlags': h}) responses.append(results.params[shock_var]) confidence_intervals.append(results.conf_int().loc[shock_var]) return np.array(responses), np.array(confidence_intervals)
+def local_projections(data, dep_var, shock_var, controls=None, horizons=20):
+    responses = []
+    cis = []
+    for h in range(horizons + 1):
+        y = data[dep_var].shift(-h)
+        X = data[[shock_var]]
+        if controls:
+            X = pd.concat([X, data[controls]], axis=1)
+        X = sm.add_constant(X)
+        valid = y.notna()
+        result = sm.OLS(y[valid], X[valid]).fit(
+            cov_type='HAC', cov_kwds={'maxlags': h + 1}
+        )
+        responses.append(result.params[shock_var])
+        cis.append(result.conf_int().loc[shock_var].values)
+    return np.array(responses), np.array(cis)
+```
+
+Local projections are more flexible than VAR-based IRFs — they do not impose the VAR's parametric structure on the impulse response shape. They tend to produce wider confidence intervals but are more robust to model misspecification. For policy analysis at long horizons (beyond 8–12 periods), local projections are generally preferred.
 
 ## Synthetic Control Method
 
-The synthetic control method constructs a synthetic counterfactual for causal analysis.
+The synthetic control method is for cases where you have one treated unit (a country, state, or company) and a set of untreated comparators. It constructs a weighted average of the control units that best matches the treated unit in the pre-treatment period, then uses that synthetic control as the counterfactual post-treatment.
 
+```python
 from scipy.optimize import minimize
 
-class SyntheticControl: def __init__(self, data, treatment_unit, control_units, treatment_period, outcome_var): self.data = data self.treatment_unit = treatment_unit self.control_units = control_units self.treatment_period = treatment_period self.outcome_var = outcome_var def construct_synthetic_control(self): """Construct synthetic control unit""" pre_treatment = self.data[self.data.index < self.treatment_period] def objective(weights): synthetic = np.sum([ w * pre_treatment[self.outcome_var][pre_treatment.unit == u] for w, u in zip(weights, self.control_units) ], axis=0) treated = pre_treatment[self.outcome_var][ pre_treatment.unit == self.treatment_unit ] return np.mean((treated - synthetic) ** 2) constraints = [ {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}, {'type': 'ineq', 'fun': lambda x: x} ] result = minimize( objective, x0=np.ones(len(self.control_units)) / len(self.control_units), constraints=constraints ) return result.x
+def build_synthetic_control(pre_treated, pre_controls):
+    n_controls = pre_controls.shape[1]
+    
+    def objective(weights):
+        synthetic = pre_controls @ weights
+        return np.mean((pre_treated - synthetic) ** 2)
+    
+    constraints = [
+        {'type': 'eq', 'fun': lambda w: w.sum() - 1},
+    ]
+    bounds = [(0, 1)] * n_controls
+    
+    result = minimize(
+        objective,
+        x0=np.ones(n_controls) / n_controls,
+        constraints=constraints,
+        bounds=bounds
+    )
+    return result.x
+```
 
-We need to be cautious about imputing causality. In addition to the math, we need to consider:
+The treatment effect at each post-treatment period is the gap between the treated unit's actual outcome and the synthetic control's outcome. The method works well when the pre-treatment fit is good — a poor pre-treatment match means the counterfactual is not credible.
 
-- Temporal ordering and dynamics
+Inference is done through placebo tests: run the same procedure on each control unit as if it had been treated, and compare the treated unit's post-treatment gap to the distribution of placebo gaps.
 
-- Identification assumptions
+## What These Methods Cannot Do
 
-- Endogeneity concerns
+None of these methods prove causation. They all require assumptions that data cannot verify:
 
-- Structural breaks and regime changes
+- **Granger causality** assumes no omitted confounders that cause both X and Y. If a third variable drives both, X will appear to Granger-cause Y.
+- **SVAR** requires you to impose a structural ordering or other restrictions. The results are only as credible as those assumptions.
+- **Local projections** require the shock to be exogenous — not caused by the outcome variable contemporaneously.
+- **Synthetic control** requires the parallel trends assumption: without treatment, the treated unit would have evolved like the synthetic control.
 
-- Heterogeneous treatment effects
-
-- Policy interventions and external validity
-
-Modern approaches combine traditional econometric methods with recent advances in causal inference, providing robust tools for analyzing economic relationships. Ultimately, the credibility of causal claims depends on the strength of identifying assumptions and data quality.
+The credibility of a causal claim rests on the identification argument, not the statistical machinery. The statistics are only as good as the economic reasoning behind them.
 
 ## Key Takeaways
 
-- Temporal ordering and dynamics
-- Identification assumptions
-- Endogeneity concerns
-- Structural breaks and regime changes
+- Granger causality tests predictive precedence, not true causation — useful as an exploratory screen, not a final answer.
+- SVAR models impose economic structure on the causal ordering and trace shocks through impulse response functions.
+- Local projections estimate IRFs more robustly than VAR at long horizons, at the cost of wider confidence intervals.
+- Synthetic control builds a data-driven counterfactual from a weighted combination of untreated units.
+- All causal methods require identification assumptions that must be justified on domain grounds, not validated statistically.
