@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import logging
@@ -202,7 +201,7 @@ def test_granger_causality(
     }
     
     if verbose:
-        logger.info(f"\nSummary:")
+        logger.info("\nSummary:")
         logger.info(f"  Minimum p-value: {min_p:.4f} (lag {best_lag})")
         logger.info(f"  Causality: {results['interpretation']}")
         if is_causal:
@@ -399,7 +398,7 @@ def main():
             lag=lag,
         )
         
-        logger.info(f"\nRegression Results:")
+        logger.info("\nRegression Results:")
         logger.info(model.summary())
         
         # Evaluate on test set
@@ -421,7 +420,7 @@ def main():
             rmse = np.sqrt(mse)
             r2 = r2_score(test_actual_aligned, test_pred_aligned)
             
-            logger.info(f"\nTest Set Performance:")
+            logger.info("\nTest Set Performance:")
             logger.info(f"  RMSE: {rmse:.4f}")
             logger.info(f"  MAE:  {mae:.4f}")
             logger.info(f"  R²:   {r2:.4f}")

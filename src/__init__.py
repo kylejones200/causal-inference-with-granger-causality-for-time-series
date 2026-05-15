@@ -13,7 +13,7 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
-def load_config(config_path: Optional[Path] = None) -> dict:
+def load_config(config_path: Path | None = None) -> dict:
     if config_path is None:
         config_path = Path(__file__).parent.parent / "config.yaml"
     if not Path(config_path).exists():
@@ -32,16 +32,16 @@ def ensure_output_dir(config: dict, key: str = "figures_dir") -> Path:
     return out
 
 
-def save_plot(path: "str | Path", *, close: bool = True) -> None:
+def save_plot(path: str | Path, *, close: bool = True) -> None:
     signalplot.save(str(path))
     if close:
         plt.close()
 
 
 def load_time_series(
-    data_path: "str | Path",
-    date_col: Optional[str] = None,
-    value_col: Optional[str] = None,
+    data_path: str | Path,
+    date_col: str | None = None,
+    value_col: str | None = None,
 ) -> pd.DataFrame:
     df = pd.read_csv(data_path)
     if date_col and date_col in df.columns:
@@ -54,7 +54,7 @@ def create_forecast_plot(
     actual: pd.Series,
     forecast: pd.Series,
     title: str = "Forecast",
-    output_path: Optional[Path] = None,
+    output_path: Path | None = None,
 ) -> None:
     fig, ax = plt.subplots(figsize=(12, 4))
     ax.plot(actual, label="Actual", color="#2b2b2b")
