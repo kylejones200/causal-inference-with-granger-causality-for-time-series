@@ -13,7 +13,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from src.evaluator import Evaluator
 from statsmodels.tsa.stattools import adfuller, grangercausalitytests
 
-from src import ensure_output_dir, get_output_dir, load_config, save_plot
+from src import ensure_output_dir, load_config
 
 logger = logging.getLogger(__name__)
 def fit_multivariate_regression(
@@ -266,8 +266,7 @@ def test_stationarity(series: pd.Series, name: str) -> bool:
     return is_stationary
 
 
-def main_step_001() -> None:
-    global config, df, output_dir, series_names, target_col
+def main() -> None:
     script_dir = Path(__file__).parent
     config = load_config(script_dir / "config.yaml")
     output_dir = ensure_output_dir(config)
@@ -284,10 +283,6 @@ def main_step_001() -> None:
     if len(series_names) < 2:
         raise ValueError("Need at least 2 series for Granger causality testing")
     target_col = series_names[0]
-
-
-def prepare_predictor_col() -> None:
-    global config, df, output_dir, series_names, target_col
     predictor_col = series_names[1]
     logger.info("\nTesting stationarity (ADF test):")
     target_stationary = test_stationarity(df[target_col], target_col)
@@ -362,7 +357,8 @@ def prepare_predictor_col() -> None:
             ax.legend(loc="best")
             ax.grid(True, alpha=0.3)
             plot_path = output_dir / config["output"].get("plot_file", "granger_forecast.png")
-            save_plot(fig, plot_path, dpi=config["output"].get("dpi", 300))
+            fig.savefig(plot_path, dpi=config["output"].get("dpi", 300), bbox_inches="tight")
+            plt.close(fig)
             logger.info(f"\nPlot saved to: {plot_path}")
             results_df = pd.DataFrame({"date": forecast.index, "forecast": forecast.values})
             csv_path = output_dir / config["output"].get("forecast_file", "granger_forecast.csv")
@@ -387,11 +383,6 @@ def prepare_predictor_col() -> None:
     summary_path = output_dir / config["output"].get("summary_file", "granger_summary.csv")
     results_summary.to_csv(summary_path, index=False, encoding="utf-8")
     logger.info(f"Causality results saved to: {summary_path}")
-
-
-def main() -> None:
-    main_step_001()
-    prepare_predictor_col()
 
 
 if __name__ == "__main__":
