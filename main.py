@@ -266,123 +266,113 @@ def test_stationarity(series: pd.Series, name: str) -> bool:
     return is_stationary
 
 
-def main() -> None:
-    script_dir = Path(__file__).parent
-    config = load_config(script_dir / "config.yaml")
-    output_dir = ensure_output_dir(config)
-    logger.info("Loading multivariate time series data...")
+def _load_and_validate(config: dict, script_dir: Path) -> tuple:
+    """Load data and resolve target/predictor columns."""
     df = load_multivariate_data(config, script_dir)
     logger.info(f"Loaded {len(df)} observations with {len(df.columns)} series")
-    logger.info(f"Series: {', '.join(df.columns)}")
-    series_names = config["data"].get("series_names", list(df.columns))
-    if len(series_names) >= 2:
-        for name in series_names[:2]:
+    names = config["data"].get("series_names", list(df.columns))
+    if len(names) >= 2:
+        for name in names[:2]:
             if name not in df.columns:
-                series_names = list(df.columns)
+                names = list(df.columns)
                 break
-    if len(series_names) < 2:
+    if len(names) < 2:
         raise ValueError("Need at least 2 series for Granger causality testing")
-    target_col = series_names[0]
-    predictor_col = series_names[1]
-    logger.info("\nTesting stationarity (ADF test):")
-    target_stationary = test_stationarity(df[target_col], target_col)
-    predictor_stationary = test_stationarity(df[predictor_col], predictor_col)
-    if not target_stationary or not predictor_stationary:
-        logger.warning("\nWarning: Non-stationary series detected.")
-        logger.info("Consider differencing before Granger causality test.")
-    max_lag = config.get("granger", {}).get("max_lag", 5)
-    gc_results = test_granger_causality(
-        df, target_col=target_col, predictor_col=predictor_col, max_lag=max_lag, verbose=True
+    return df, names[0], names[1]
+
+
+def _analyse_causality(config: dict, df, target_col: str, predictor_col: str) -> tuple:
+    """ADF stationarity check + Granger causality test."""
+    logger.info("Testing stationarity (ADF):")
+    ok_t = test_stationarity(df[target_col], target_col)
+    ok_p = test_stationarity(df[predictor_col], predictor_col)
+    if not (ok_t and ok_p):
+        logger.warning("Non-stationary series detected - consider differencing first.")
+    gc = test_granger_causality(
+        df, target_col=target_col, predictor_col=predictor_col,
+        max_lag=config.get("granger", {}).get("max_lag", 5), verbose=True,
     )
-    correlation = df[[target_col, predictor_col]].corr().iloc[0, 1]
-    logger.info(f"\nCorrelation between {target_col} and {predictor_col}: {correlation:.4f}")
-    evaluator = Evaluator(test_size=config["evaluation"].get("test_size", 0.2))
-    train_df = df.iloc[: int(len(df) * (1 - evaluator.test_size))]
-    test_df = df.iloc[int(len(df) * (1 - evaluator.test_size)) :]
-    if gc_results["is_causal"]:
-        lag = gc_results["best_lag"]
-        logger.info(f"\nFitting multivariate regression model (lag={lag})...")
-        model, train_pred = fit_multivariate_regression(
-            train_df, target_col=target_col, predictor_cols=[predictor_col], lag=lag
-        )
-        logger.info("\nRegression Results:")
-        logger.info(model.summary())
-        test_model, test_pred = fit_multivariate_regression(
-            test_df, target_col=target_col, predictor_cols=[predictor_col], lag=lag
-        )
-        test_actual = test_df[target_col].iloc[lag:]
-        test_pred_aligned = test_pred[test_pred.index.isin(test_actual.index)]
-        test_actual_aligned = test_actual[test_actual.index.isin(test_pred_aligned.index)]
-        if len(test_pred_aligned) > 0:
-            mse = mean_squared_error(test_actual_aligned, test_pred_aligned)
-            mae = mean_absolute_error(test_actual_aligned, test_pred_aligned)
-            rmse = np.sqrt(mse)
-            r2 = r2_score(test_actual_aligned, test_pred_aligned)
-            logger.info("\nTest Set Performance:")
-            logger.info(f"  RMSE: {rmse:.4f}")
-            logger.info(f"  MAE:  {mae:.4f}")
-            logger.info(f"  R²:   {r2:.4f}")
-            forecast_horizon = config["evaluation"].get("forecast_horizon", len(test_df))
-            forecast = forecast_multivariate(
-                model,
-                train_df,
-                target_col=target_col,
-                predictor_cols=[predictor_col],
-                lag=lag,
-                forecast_horizon=forecast_horizon,
-            )
-            fig, ax = plt.subplots(figsize=(12, 6))
-            ax.plot(
-                train_df.index, train_df[target_col], "k-", label=f"{target_col} (Train)", alpha=0.7
-            )
-            ax.plot(
-                test_df.index, test_df[target_col], "g-", label=f"{target_col} (Test)", alpha=0.7
-            )
-            if len(train_pred) > 0:
-                ax.plot(
-                    train_pred.index, train_pred.values, "b--", label="Train Predictions", alpha=0.7
-                )
-            if len(test_pred_aligned) > 0:
-                ax.plot(
-                    test_pred_aligned.index,
-                    test_pred_aligned.values,
-                    "r--",
-                    label="Test Predictions",
-                    alpha=0.7,
-                )
-            ax.plot(forecast.index, forecast.values, "m--", label="Forecast", linewidth=2)
-            ax.set_xlabel("Date")
-            ax.set_ylabel("Value")
-            ax.set_title(f"Granger Causality Forecast: {target_col} using {predictor_col}")
-            ax.legend(loc="best")
-            ax.grid(True, alpha=0.3)
-            plot_path = output_dir / config["output"].get("plot_file", "granger_forecast.png")
-            fig.savefig(plot_path, dpi=config["output"].get("dpi", 300), bbox_inches="tight")
-            plt.close(fig)
-            logger.info(f"\nPlot saved to: {plot_path}")
-            results_df = pd.DataFrame({"date": forecast.index, "forecast": forecast.values})
-            csv_path = output_dir / config["output"].get("forecast_file", "granger_forecast.csv")
-            results_df.to_csv(csv_path, index=False, encoding="utf-8")
-            logger.info(f"Forecast saved to: {csv_path}")
-        else:
-            logger.warning("\nWarning: Insufficient test data for evaluation")
-    else:
-        logger.info(
-            f"\nNo Granger causality detected. Cannot use {predictor_col} as leading indicator."
-        )
-        logger.info("Consider using univariate forecasting methods instead.")
-    results_summary = pd.DataFrame(
-        {
-            "test": [f"{predictor_col} → {target_col}"],
-            "min_p_value": [gc_results["min_p_value"]],
-            "best_lag": [gc_results["best_lag"]],
-            "is_causal": [gc_results["is_causal"]],
-            "correlation": [correlation],
-        }
+    corr = df[[target_col, predictor_col]].corr().iloc[0, 1]
+    logger.info(f"Correlation {target_col} / {predictor_col}: {corr:.4f}")
+    return gc, corr
+
+
+def _fit_and_evaluate(config: dict, df, gc: dict,
+                      target_col: str, predictor_col: str, output_dir: Path) -> None:
+    """If causal: fit regression, evaluate on test set, generate forecast + plot."""
+    if not gc["is_causal"]:
+        logger.info(f"No Granger causality found for {predictor_col} to {target_col}.")
+        return
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+    lag   = gc["best_lag"]
+    split = int(len(df) * (1 - config["evaluation"].get("test_size", 0.2)))
+    train_df, test_df = df.iloc[:split], df.iloc[split:]
+
+    model, train_pred = fit_multivariate_regression(
+        train_df, target_col=target_col, predictor_cols=[predictor_col], lag=lag
     )
-    summary_path = output_dir / config["output"].get("summary_file", "granger_summary.csv")
-    results_summary.to_csv(summary_path, index=False, encoding="utf-8")
-    logger.info(f"Causality results saved to: {summary_path}")
+    logger.info(model.summary())
+    _, test_pred = fit_multivariate_regression(
+        test_df, target_col=target_col, predictor_cols=[predictor_col], lag=lag
+    )
+    actual = test_df[target_col].iloc[lag:]
+    pred   = test_pred[test_pred.index.isin(actual.index)]
+    actual = actual[actual.index.isin(pred.index)]
+    if len(pred) == 0:
+        logger.warning("Insufficient test data for evaluation.")
+        return
+    rmse = np.sqrt(mean_squared_error(actual, pred))
+    logger.info(f"Test  RMSE={rmse:.4f}  MAE={mean_absolute_error(actual, pred):.4f}  R2={r2_score(actual, pred):.4f}")
+
+    horizon  = config["evaluation"].get("forecast_horizon", len(test_df))
+    forecast = forecast_multivariate(
+        model, train_df, target_col=target_col, predictor_cols=[predictor_col],
+        lag=lag, forecast_horizon=horizon,
+    )
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(train_df.index, train_df[target_col], "k-", label=f"{target_col} (Train)", alpha=0.7)
+    ax.plot(test_df.index,  test_df[target_col],  "g-", label=f"{target_col} (Test)",  alpha=0.7)
+    if len(train_pred): ax.plot(train_pred.index, train_pred,  "b--", label="Train Pred", alpha=0.7)
+    if len(pred):       ax.plot(pred.index,       pred.values, "r--", label="Test Pred",  alpha=0.7)
+    ax.plot(forecast.index, forecast.values, "m--", label="Forecast", linewidth=2)
+    ax.set(xlabel="Date", ylabel="Value",
+           title=f"Granger Causality Forecast: {target_col} from {predictor_col}")
+    ax.legend(loc="best"); ax.grid(True, alpha=0.3)
+    plot_path = output_dir / config["output"].get("plot_file", "granger_forecast.png")
+    fig.savefig(plot_path, dpi=config["output"].get("dpi", 300), bbox_inches="tight")
+    plt.close(fig)
+    logger.info(f"Plot saved: {plot_path}")
+    import pandas as pd
+    csv = output_dir / config["output"].get("forecast_file", "granger_forecast.csv")
+    pd.DataFrame({"date": forecast.index, "forecast": forecast.values}).to_csv(csv, index=False)
+    logger.info(f"Forecast saved: {csv}")
+
+
+def _save_summary(config: dict, gc: dict, corr: float,
+                  target_col: str, predictor_col: str, output_dir: Path) -> None:
+    import pandas as pd
+    path = output_dir / config["output"].get("summary_file", "granger_summary.csv")
+    pd.DataFrame({
+        "test":        [f"{predictor_col} to {target_col}"],
+        "min_p_value": [gc["min_p_value"]],
+        "best_lag":    [gc["best_lag"]],
+        "is_causal":   [gc["is_causal"]],
+        "correlation": [corr],
+    }).to_csv(path, index=False, encoding="utf-8")
+    logger.info(f"Summary saved: {path}")
+
+
+def main() -> None:
+    script_dir = Path(__file__).parent
+    config     = load_config(script_dir / "config.yaml")
+    output_dir = ensure_output_dir(config)
+    df, target_col, predictor_col = _load_and_validate(config, script_dir)
+    gc, corr = _analyse_causality(config, df, target_col, predictor_col)
+    _fit_and_evaluate(config, df, gc, target_col, predictor_col, output_dir)
+    _save_summary(config, gc, corr, target_col, predictor_col, output_dir)
 
 
 if __name__ == "__main__":
